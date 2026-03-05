@@ -2,12 +2,26 @@ import unittest
 
 from rank_aggregation.methods import (
     BestRankCountAggregator,
+    BradleyTerryAggregator,
+    BordaCountAggregator,
+    CopelandPairwiseAggregator,
+    DMAUCPerformanceProfileAggregator,
+    DMLBOLeaveOneOutProfileAggregator,
+    DowdallHarmonicAggregator,
     FriedmanNemenyiRankAggregator,
+    GeometricMeanQualityAggregator,
+    HarmonicMeanQualityAggregator,
     KemenyYoungAggregator,
+    MarkovChainAggregator,
+    MaximalLotteryAggregator,
     MeanQualityAggregator,
     MeanRankAggregator,
     MedianQualityAggregator,
     MedianRankAggregator,
+    MinimaxCondorcetAggregator,
+    PlackettLuceAggregator,
+    RankedPairsTidemanAggregator,
+    ReciprocalRankFusionAggregator,
     RescaledMeanQualityAggregator,
     ThresholdQualityAggregator,
     WorstRankCountAggregator,
@@ -57,6 +71,94 @@ class TestRankMethods(unittest.TestCase):
         self.assertEqual(result.scores["algo_c"], 1.0)
         self.assertEqual(result.ranking, ["algo_b", "algo_c", "algo_a"])
 
+    def test_borda_count(self) -> None:
+        rankings = {
+            "algo_a": [1, 2, 2],
+            "algo_b": [2, 1, 3],
+            "algo_c": [3, 3, 1],
+        }
+        result = BordaCountAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 4.0)
+        self.assertEqual(result.scores["algo_b"], 3.0)
+        self.assertEqual(result.scores["algo_c"], 2.0)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_dowdall_harmonic(self) -> None:
+        rankings = {
+            "algo_a": [1, 2, 2],
+            "algo_b": [2, 1, 3],
+            "algo_c": [3, 3, 1],
+        }
+        result = DowdallHarmonicAggregator().aggregate(rankings)
+        self.assertAlmostEqual(result.scores["algo_a"], 2.0)
+        self.assertAlmostEqual(result.scores["algo_b"], 1.8333333333333333)
+        self.assertAlmostEqual(result.scores["algo_c"], 1.6666666666666665)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_reciprocal_rank_fusion(self) -> None:
+        rankings = {
+            "algo_a": [1, 2, 3],
+            "algo_b": [2, 1, 2],
+            "algo_c": [3, 3, 1],
+        }
+        result = ReciprocalRankFusionAggregator(k=10).aggregate(rankings)
+        self.assertAlmostEqual(result.scores["algo_a"], 0.2511655011655012)
+        self.assertAlmostEqual(result.scores["algo_b"], 0.25757575757575757)
+        self.assertAlmostEqual(result.scores["algo_c"], 0.24475524475524474)
+        self.assertEqual(result.ranking, ["algo_b", "algo_a", "algo_c"])
+
+    def test_minimax_condorcet(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 2, 3],
+            "algo_b": [2, 2, 1, 3, 1],
+            "algo_c": [3, 3, 3, 1, 2],
+        }
+        result = MinimaxCondorcetAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 2.0)
+        self.assertEqual(result.scores["algo_b"], 3.0)
+        self.assertEqual(result.scores["algo_c"], 4.0)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_ranked_pairs_tideman(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 3, 3, 2],
+            "algo_b": [2, 2, 1, 1, 3],
+            "algo_c": [3, 3, 2, 2, 1],
+        }
+        result = RankedPairsTidemanAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_ranked_pairs_condorcet_winner_first(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 1, 2, 2],
+            "algo_b": [2, 2, 3, 1, 3],
+            "algo_c": [3, 3, 2, 3, 1],
+        }
+        result = RankedPairsTidemanAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking[0], "algo_a")
+
+    def test_markov_chain_aggregation(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = MarkovChainAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertAlmostEqual(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_maximal_lottery_condorcet(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 1, 2, 2],
+            "algo_b": [2, 2, 3, 1, 3],
+            "algo_c": [3, 3, 2, 3, 1],
+        }
+        result = MaximalLotteryAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking[0], "algo_a")
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_c"])
+
 
 class TestQualityMethods(unittest.TestCase):
     def test_mean_quality(self) -> None:
@@ -76,6 +178,30 @@ class TestQualityMethods(unittest.TestCase):
         result = MedianQualityAggregator().aggregate(qualities)
         self.assertEqual(result.scores["algo_a"], 0.85)
         self.assertEqual(result.ranking, ["algo_a", "algo_b"])
+
+    def test_geometric_mean_quality(self) -> None:
+        qualities = {
+            "algo_a": [0.8, 0.9, 1.0],
+            "algo_b": [0.9, 0.9, 0.9],
+            "algo_c": [1.0, 1.0, 0.7],
+        }
+        result = GeometricMeanQualityAggregator().aggregate(qualities)
+        self.assertAlmostEqual(result.scores["algo_a"], 0.896280949311433)
+        self.assertAlmostEqual(result.scores["algo_b"], 0.9)
+        self.assertAlmostEqual(result.scores["algo_c"], 0.8879040017426006)
+        self.assertEqual(result.ranking, ["algo_b", "algo_a", "algo_c"])
+
+    def test_harmonic_mean_quality(self) -> None:
+        qualities = {
+            "algo_a": [0.8, 0.9, 1.0],
+            "algo_b": [0.9, 0.9, 0.9],
+            "algo_c": [1.0, 1.0, 0.7],
+        }
+        result = HarmonicMeanQualityAggregator().aggregate(qualities)
+        self.assertAlmostEqual(result.scores["algo_a"], 0.8925619834710744)
+        self.assertAlmostEqual(result.scores["algo_b"], 0.9)
+        self.assertAlmostEqual(result.scores["algo_c"], 0.875)
+        self.assertEqual(result.ranking, ["algo_b", "algo_a", "algo_c"])
 
     def test_rescaled_mean_quality(self) -> None:
         qualities = {
@@ -139,6 +265,81 @@ class TestAdvancedMethods(unittest.TestCase):
         result = KemenyYoungAggregator().aggregate(rankings)
         self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
 
+    def test_bradley_terry(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = BradleyTerryAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_plackett_luce(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 1, 2, 2],
+            "algo_b": [2, 2, 3, 1, 3],
+            "algo_c": [3, 3, 2, 3, 1],
+        }
+        result = PlackettLuceAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertAlmostEqual(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_copeland_pairwise(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = CopelandPairwiseAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 2.0)
+        self.assertEqual(result.scores["algo_b"], 1.0)
+        self.assertEqual(result.scores["algo_c"], 0.0)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_copeland_pairwise_tied_duel(self) -> None:
+        rankings = {
+            "algo_a": [1, 2],
+            "algo_b": [2, 1],
+        }
+        result = CopelandPairwiseAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 0.5)
+        self.assertEqual(result.scores["algo_b"], 0.5)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b"])
+
+    def test_dm_auc_profile(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 10],
+            "algo_b": [2, 2, 2],
+            "algo_c": [3, 3, 1],
+        }
+        result = DMAUCPerformanceProfileAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_b", "algo_c", "algo_a"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+        self.assertGreater(result.scores["algo_c"], result.scores["algo_a"])
+
+    def test_dm_lbo_leave_one_out(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 10],
+            "algo_b": [2, 2, 2],
+            "algo_c": [3, 3, 1],
+        }
+        result = DMLBOLeaveOneOutProfileAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_b", "algo_c", "algo_a"])
+        self.assertEqual(result.scores["algo_b"], 3.0)
+        self.assertEqual(result.scores["algo_c"], 2.0)
+        self.assertEqual(result.scores["algo_a"], 1.0)
+
+    def test_dm_lbo_tie_break(self) -> None:
+        rankings = {
+            "algo_a": [1, 2],
+            "algo_b": [2, 1],
+        }
+        result = DMLBOLeaveOneOutProfileAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b"])
+
 
 class TestValidation(unittest.TestCase):
     def test_empty_input_raises(self) -> None:
@@ -156,6 +357,62 @@ class TestValidation(unittest.TestCase):
     def test_invalid_theta_raises(self) -> None:
         with self.assertRaises(ValueError):
             ThresholdQualityAggregator(theta=1.5)
+
+    def test_invalid_bradley_terry_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            BradleyTerryAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            BradleyTerryAggregator(tol=0.0)
+
+    def test_invalid_plackett_luce_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            PlackettLuceAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            PlackettLuceAggregator(tol=0.0)
+
+    def test_invalid_markov_chain_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            MarkovChainAggregator(damping=1.0)
+        with self.assertRaises(ValueError):
+            MarkovChainAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            MarkovChainAggregator(tol=0.0)
+
+    def test_invalid_maximal_lottery_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            MaximalLotteryAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            MaximalLotteryAggregator(tol=0.0)
+
+    def test_invalid_dm_auc_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            DMAUCPerformanceProfileAggregator(tau_max=1.0)
+        with self.assertRaises(ValueError):
+            DMAUCPerformanceProfileAggregator().aggregate({"algo_a": [0], "algo_b": [1]})
+
+    def test_invalid_dm_lbo_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            DMLBOLeaveOneOutProfileAggregator(tau_max=1.0)
+        with self.assertRaises(ValueError):
+            DMLBOLeaveOneOutProfileAggregator().aggregate({"algo_a": [0], "algo_b": [1]})
+
+    def test_invalid_dowdall_ranks_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            DowdallHarmonicAggregator().aggregate({"algo_a": [1, 0], "algo_b": [2, 1]})
+
+    def test_invalid_geometric_mean_values_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            GeometricMeanQualityAggregator().aggregate({"algo_a": [0.8, -0.1], "algo_b": [0.7, 0.2]})
+
+    def test_invalid_harmonic_mean_values_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            HarmonicMeanQualityAggregator().aggregate({"algo_a": [0.8, 0.0], "algo_b": [0.7, 0.2]})
+
+    def test_invalid_rrf_params_or_ranks_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            ReciprocalRankFusionAggregator(k=-1)
+        with self.assertRaises(ValueError):
+            ReciprocalRankFusionAggregator().aggregate({"algo_a": [1, 0], "algo_b": [2, 1]})
 
 
 if __name__ == "__main__":
