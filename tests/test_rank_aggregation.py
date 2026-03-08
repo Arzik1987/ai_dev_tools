@@ -12,6 +12,7 @@ from rank_aggregation.methods import (
     GeometricMeanQualityAggregator,
     HarmonicMeanQualityAggregator,
     KemenyYoungAggregator,
+    MarginRowSumAggregator,
     MarkovChainAggregator,
     MaximalLotteryAggregator,
     MeanQualityAggregator,
@@ -23,7 +24,13 @@ from rank_aggregation.methods import (
     RankedPairsTidemanAggregator,
     ReciprocalRankFusionAggregator,
     RescaledMeanQualityAggregator,
+    RiverAggregator,
+    SchulzeBeatpathAggregator,
+    SimpleStableVotingAggregator,
+    SplitCycleAggregator,
+    StableVotingAggregator,
     ThresholdQualityAggregator,
+    ThurstoneMostellerAggregator,
     WorstRankCountAggregator,
 )
 
@@ -136,6 +143,50 @@ class TestRankMethods(unittest.TestCase):
         }
         result = RankedPairsTidemanAggregator().aggregate(rankings)
         self.assertEqual(result.ranking[0], "algo_a")
+
+    def test_schulze_beatpath(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = SchulzeBeatpathAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 2.0)
+        self.assertEqual(result.scores["algo_b"], 1.0)
+        self.assertEqual(result.scores["algo_c"], 0.0)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_margin_row_sum(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = MarginRowSumAggregator().aggregate(rankings)
+        self.assertEqual(result.scores["algo_a"], 6.0)
+        self.assertEqual(result.scores["algo_b"], 4.0)
+        self.assertEqual(result.scores["algo_c"], -10.0)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_split_cycle(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = SplitCycleAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_river(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = RiverAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
 
     def test_markov_chain_aggregation(self) -> None:
         rankings = {
@@ -276,6 +327,35 @@ class TestAdvancedMethods(unittest.TestCase):
         self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
         self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
 
+    def test_thurstone_mosteller(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = ThurstoneMostellerAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_stable_voting(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = StableVotingAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_simple_stable_voting(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1, 2],
+            "algo_b": [2, 2, 1, 2, 1],
+            "algo_c": [3, 3, 3, 3, 3],
+        }
+        result = SimpleStableVotingAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
     def test_plackett_luce(self) -> None:
         rankings = {
             "algo_a": [1, 1, 1, 2, 2],
@@ -363,6 +443,16 @@ class TestValidation(unittest.TestCase):
             BradleyTerryAggregator(max_iter=0)
         with self.assertRaises(ValueError):
             BradleyTerryAggregator(tol=0.0)
+
+    def test_invalid_thurstone_mosteller_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            ThurstoneMostellerAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            ThurstoneMostellerAggregator(tol=0.0)
+        with self.assertRaises(ValueError):
+            ThurstoneMostellerAggregator(ridge=-1.0)
+        with self.assertRaises(ValueError):
+            ThurstoneMostellerAggregator(initial_step=0.0)
 
     def test_invalid_plackett_luce_params_raise(self) -> None:
         with self.assertRaises(ValueError):

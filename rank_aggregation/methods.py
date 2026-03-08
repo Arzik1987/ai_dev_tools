@@ -292,6 +292,228 @@ class BradleyTerryAggregator(RankAggregator):
         raise NotImplementedError("aggregate() is overridden for this method")
 
 
+class SchulzeBeatpathAggregator(RankAggregator):
+    """R-Sch: Schulze strongest-path aggregation from pairwise support."""
+
+    @property
+    def name(self) -> str:
+        return "R-Sch"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        supports = _pairwise_supports(rankings, algorithms)
+        strongest_paths = _schulze_strongest_paths(algorithms, supports)
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+
+        scores = {algorithm: 0.0 for algorithm in algorithms}
+        for first in algorithms:
+            for second in algorithms:
+                if first == second:
+                    continue
+                if strongest_paths[(first, second)] > strongest_paths[(second, first)]:
+                    scores[first] += 1.0
+
+        ranking = sorted(algorithms, key=lambda algorithm: (-scores[algorithm], mean_ranks[algorithm], algorithm))
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class MarginRowSumAggregator(RankAggregator):
+    """R-MRS: sum of pairwise row margins against all opponents."""
+
+    @property
+    def name(self) -> str:
+        return "R-MRS"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        margins = _pairwise_margins(rankings, algorithms)
+        scores = {
+            algorithm: float(sum(margins[(algorithm, opponent)] for opponent in algorithms if opponent != algorithm))
+            for algorithm in algorithms
+        }
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+        ranking = sorted(algorithms, key=lambda algorithm: (-scores[algorithm], mean_ranks[algorithm], algorithm))
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class SplitCycleAggregator(RankAggregator):
+    """R-SC: Split Cycle ranking from pairwise margin defeats."""
+
+    @property
+    def name(self) -> str:
+        return "R-SC"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        margins = _pairwise_margins(rankings, algorithms)
+        strongest_paths = _strongest_margin_paths(algorithms, margins)
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+
+        defeats: dict[str, set[str]] = {algorithm: set() for algorithm in algorithms}
+        scores = {algorithm: 0.0 for algorithm in algorithms}
+        for winner in algorithms:
+            for loser in algorithms:
+                if winner == loser:
+                    continue
+                if margins[(winner, loser)] > strongest_paths[(loser, winner)]:
+                    defeats[winner].add(loser)
+                    scores[winner] += 1.0
+
+        ranking = _layered_defeat_ranking(defeats, algorithms, mean_ranks)
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class RiverAggregator(RankAggregator):
+    """R-River: recursive River winner elimination from pairwise margins."""
+
+    @property
+    def name(self) -> str:
+        return "R-River"
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        margins = _pairwise_margins(rankings, algorithms)
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+
+        remaining = algorithms[:]
+        ranking: list[str] = []
+        while remaining:
+            winner = _river_winner(remaining, margins, mean_ranks)
+            ranking.append(winner)
+            remaining.remove(winner)
+
+        scores = {algorithm: float(len(algorithms) - index) for index, algorithm in enumerate(ranking)}
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class ThurstoneMostellerAggregator(RankAggregator):
+    """R-TM: Thurstone-Mosteller paired-comparison model with probit link."""
+
+    def __init__(
+        self,
+        max_iter: int = 1000,
+        tol: float = 1e-10,
+        ridge: float = 1e-6,
+        initial_step: float = 1.0,
+    ) -> None:
+        if max_iter <= 0:
+            raise ValueError("max_iter must be > 0")
+        if tol <= 0:
+            raise ValueError("tol must be > 0")
+        if ridge < 0:
+            raise ValueError("ridge must be >= 0")
+        if initial_step <= 0:
+            raise ValueError("initial_step must be > 0")
+        self.max_iter = max_iter
+        self.tol = tol
+        self.ridge = ridge
+        self.initial_step = initial_step
+
+    @property
+    def name(self) -> str:
+        return "R-TM"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        supports = _pairwise_supports(rankings, algorithms)
+        scores = _fit_thurstone_mosteller(
+            algorithms,
+            supports,
+            max_iter=self.max_iter,
+            tol=self.tol,
+            ridge=self.ridge,
+            initial_step=self.initial_step,
+        )
+        ranking = [name for name, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class StableVotingAggregator(RankAggregator):
+    """R-SV: Stable Voting with Split-Cycle-style admissibility."""
+
+    @property
+    def name(self) -> str:
+        return "R-SV"
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        margins = _pairwise_margins(rankings, algorithms)
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+        ranking = _recursive_pairwise_elimination(
+            algorithms,
+            margins,
+            mean_ranks,
+            use_stable_filter=True,
+        )
+        scores = {algorithm: float(len(algorithms) - index) for index, algorithm in enumerate(ranking)}
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class SimpleStableVotingAggregator(RankAggregator):
+    """R-SSV: Simple Stable Voting recursive elimination."""
+
+    @property
+    def name(self) -> str:
+        return "R-SSV"
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        margins = _pairwise_margins(rankings, algorithms)
+        mean_ranks = {algorithm: float(fmean(rankings[algorithm])) for algorithm in algorithms}
+        ranking = _recursive_pairwise_elimination(
+            algorithms,
+            margins,
+            mean_ranks,
+            use_stable_filter=False,
+        )
+        scores = {algorithm: float(len(algorithms) - index) for index, algorithm in enumerate(ranking)}
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
 class PlackettLuceAggregator(RankAggregator):
     """R-PL: Plackett-Luce worth estimation from full task rankings."""
 
@@ -855,6 +1077,61 @@ def _fit_plackett_luce(
     return worth
 
 
+def _fit_thurstone_mosteller(
+    algorithms: list[str],
+    wins: dict[tuple[str, str], float],
+    max_iter: int,
+    tol: float,
+    ridge: float,
+    initial_step: float,
+) -> dict[str, float]:
+    """Fit zero-centered Thurstone-Mosteller strengths via projected gradient ascent."""
+    strengths = {algorithm: 0.0 for algorithm in algorithms}
+
+    for _ in range(max_iter):
+        baseline = _thurstone_mosteller_objective(algorithms, wins, strengths, ridge)
+        gradient = {algorithm: 0.0 for algorithm in algorithms}
+
+        for first, second in combinations(algorithms, 2):
+            diff = strengths[first] - strengths[second]
+            prob = min(max(NormalDist().cdf(diff), 1e-12), 1.0 - 1e-12)
+            density = _standard_normal_pdf(diff)
+            common = density * (wins[(first, second)] / prob - wins[(second, first)] / (1.0 - prob))
+            gradient[first] += common
+            gradient[second] -= common
+
+        if ridge > 0:
+            for algorithm in algorithms:
+                gradient[algorithm] -= 2.0 * ridge * strengths[algorithm]
+
+        mean_gradient = fmean(gradient.values())
+        for algorithm in algorithms:
+            gradient[algorithm] -= mean_gradient
+
+        step = initial_step
+        updated = strengths
+        improved = False
+        while step > 1e-12:
+            candidate = {algorithm: strengths[algorithm] + step * gradient[algorithm] for algorithm in algorithms}
+            mean_candidate = fmean(candidate.values())
+            for algorithm in algorithms:
+                candidate[algorithm] -= mean_candidate
+
+            objective = _thurstone_mosteller_objective(algorithms, wins, candidate, ridge)
+            if objective >= baseline:
+                updated = candidate
+                improved = True
+                break
+            step *= 0.5
+
+        delta = max(abs(updated[algorithm] - strengths[algorithm]) for algorithm in algorithms)
+        strengths = updated
+        if not improved or delta < tol:
+            break
+
+    return strengths
+
+
 def _stationary_distribution(matrix: list[list[float]], max_iter: int, tol: float) -> list[float]:
     """Compute stationary distribution for a row-stochastic matrix via power iteration."""
     n = len(matrix)
@@ -907,6 +1184,29 @@ def _maximal_lottery_distribution(payoff: list[list[float]], max_iter: int, tol:
     if total <= 0:
         return [1.0 / n for _ in range(n)]
     return [value / total for value in row_counts]
+
+
+def _thurstone_mosteller_objective(
+    algorithms: Sequence[str],
+    wins: dict[tuple[str, str], float],
+    strengths: dict[str, float],
+    ridge: float,
+) -> float:
+    """Penalized log-likelihood under the probit paired-comparison model."""
+    objective = 0.0
+    for first, second in combinations(algorithms, 2):
+        diff = strengths[first] - strengths[second]
+        prob = min(max(NormalDist().cdf(diff), 1e-12), 1.0 - 1e-12)
+        objective += wins[(first, second)] * log(prob)
+        objective += wins[(second, first)] * log(1.0 - prob)
+
+    if ridge > 0:
+        objective -= ridge * sum(value * value for value in strengths.values())
+    return objective
+
+
+def _standard_normal_pdf(value: float) -> float:
+    return exp(-0.5 * value * value) / sqrt(2.0 * 3.141592653589793)
 
 
 def _dm_auc_scores(
@@ -983,6 +1283,98 @@ def _studentized_critical_value(alpha: float, k: int) -> float:
     return sqrt(2.0) * z_value
 
 
+def _pairwise_supports(rankings: Rankings, algorithms: Sequence[str]) -> dict[tuple[str, str], float]:
+    """Return pairwise support counts, splitting tied tasks evenly."""
+    supports: dict[tuple[str, str], float] = {(first, second): 0.0 for first in algorithms for second in algorithms}
+    task_count = len(next(iter(rankings.values())))
+    for first, second in combinations(algorithms, 2):
+        first_support = 0.0
+        second_support = 0.0
+        for task_idx in range(task_count):
+            first_rank = rankings[first][task_idx]
+            second_rank = rankings[second][task_idx]
+            if first_rank < second_rank:
+                first_support += 1.0
+            elif second_rank < first_rank:
+                second_support += 1.0
+            else:
+                first_support += 0.5
+                second_support += 0.5
+        supports[(first, second)] = first_support
+        supports[(second, first)] = second_support
+    return supports
+
+
+def _pairwise_margins(rankings: Rankings, algorithms: Sequence[str]) -> dict[tuple[str, str], float]:
+    """Return antisymmetric pairwise win-count margins."""
+    supports = _pairwise_supports(rankings, algorithms)
+    margins: dict[tuple[str, str], float] = {}
+    for first in algorithms:
+        for second in algorithms:
+            if first == second:
+                margins[(first, second)] = 0.0
+            else:
+                margins[(first, second)] = supports[(first, second)] - supports[(second, first)]
+    return margins
+
+
+def _schulze_strongest_paths(
+    algorithms: Sequence[str],
+    supports: dict[tuple[str, str], float],
+) -> dict[tuple[str, str], float]:
+    """Compute strongest-path strengths using the Schulze winning-votes variant."""
+    strongest_paths: dict[tuple[str, str], float] = {(first, second): 0.0 for first in algorithms for second in algorithms}
+
+    for first in algorithms:
+        for second in algorithms:
+            if first == second:
+                continue
+            if supports[(first, second)] > supports[(second, first)]:
+                strongest_paths[(first, second)] = supports[(first, second)]
+
+    for pivot in algorithms:
+        for source in algorithms:
+            if source == pivot:
+                continue
+            for target in algorithms:
+                if target == source or target == pivot:
+                    continue
+                strongest_paths[(source, target)] = max(
+                    strongest_paths[(source, target)],
+                    min(strongest_paths[(source, pivot)], strongest_paths[(pivot, target)]),
+                )
+
+    return strongest_paths
+
+
+def _strongest_margin_paths(
+    algorithms: Sequence[str],
+    margins: dict[tuple[str, str], float],
+) -> dict[tuple[str, str], float]:
+    """Compute strongest path strengths using positive pairwise margins as edge weights."""
+    strongest_paths: dict[tuple[str, str], float] = {(first, second): 0.0 for first in algorithms for second in algorithms}
+
+    for first in algorithms:
+        for second in algorithms:
+            if first == second:
+                continue
+            strongest_paths[(first, second)] = max(0.0, margins[(first, second)])
+
+    for pivot in algorithms:
+        for source in algorithms:
+            if source == pivot:
+                continue
+            for target in algorithms:
+                if target == source or target == pivot:
+                    continue
+                strongest_paths[(source, target)] = max(
+                    strongest_paths[(source, target)],
+                    min(strongest_paths[(source, pivot)], strongest_paths[(pivot, target)]),
+                )
+
+    return strongest_paths
+
+
 def _pairwise_preferences(rankings: Rankings, algorithms: list[str]) -> dict[tuple[str, str], int]:
     preferences: dict[tuple[str, str], int] = {}
     task_count = len(next(iter(rankings.values())))
@@ -999,6 +1391,170 @@ def _pairwise_preferences(rankings: Rankings, algorithms: list[str]) -> dict[tup
         preferences[(first, second)] = first_over_second
         preferences[(second, first)] = second_over_first
     return preferences
+
+
+def _layered_defeat_ranking(
+    defeats: dict[str, set[str]],
+    algorithms: Sequence[str],
+    mean_ranks: dict[str, float],
+) -> list[str]:
+    """Produce a deterministic order by repeatedly removing undefeated layers."""
+    remaining = set(algorithms)
+    ranking: list[str] = []
+    while remaining:
+        layer = [
+            algorithm
+            for algorithm in remaining
+            if not any(algorithm in defeats[opponent] for opponent in remaining if opponent != algorithm)
+        ]
+        if not layer:
+            layer = list(remaining)
+        layer.sort(key=lambda algorithm: (mean_ranks[algorithm], algorithm))
+        ranking.extend(layer)
+        for algorithm in layer:
+            remaining.remove(algorithm)
+    return ranking
+
+
+def _reachable(graph: dict[str, set[str]], source: str, target: str) -> bool:
+    stack = [source]
+    seen: set[str] = set()
+    while stack:
+        current = stack.pop()
+        if current == target:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(graph[current])
+    return False
+
+
+def _reachability_size(graph: dict[str, set[str]], source: str) -> int:
+    stack = [source]
+    seen: set[str] = set()
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(graph[current])
+    return len(seen)
+
+
+def _river_winner(
+    algorithms: Sequence[str],
+    margins: dict[tuple[str, str], float],
+    mean_ranks: dict[str, float],
+) -> str:
+    """Select the River winner for the current candidate subset."""
+    graph: dict[str, set[str]] = {algorithm: set() for algorithm in algorithms}
+    indegree = {algorithm: 0 for algorithm in algorithms}
+    ordered_edges = sorted(
+        [
+            (margins[(winner, loser)], winner, loser)
+            for winner in algorithms
+            for loser in algorithms
+            if winner != loser and margins[(winner, loser)] > 0
+        ],
+        key=lambda item: (-item[0], item[1], item[2]),
+    )
+
+    for _, winner, loser in ordered_edges:
+        if indegree[winner] != 0:
+            continue
+        if indegree[loser] != 0:
+            continue
+        if _reachable(graph, loser, winner):
+            continue
+        graph[winner].add(loser)
+        indegree[loser] = 1
+
+    roots = [algorithm for algorithm in algorithms if indegree[algorithm] == 0]
+    return min(
+        roots,
+        key=lambda algorithm: (-_reachability_size(graph, algorithm), mean_ranks[algorithm], algorithm),
+    )
+
+
+def _recursive_pairwise_elimination(
+    algorithms: list[str],
+    margins: dict[tuple[str, str], float],
+    mean_ranks: dict[str, float],
+    use_stable_filter: bool,
+) -> list[str]:
+    """Repeatedly remove memoized winner sets to produce a total order."""
+    index = {algorithm: bit for bit, algorithm in enumerate(algorithms)}
+    memo: dict[int, frozenset[str]] = {}
+
+    def winners(mask: int) -> frozenset[str]:
+        if mask in memo:
+            return memo[mask]
+
+        present = [algorithm for algorithm in algorithms if mask & (1 << index[algorithm])]
+        if len(present) == 1:
+            result = frozenset(present)
+            memo[mask] = result
+            return result
+
+        condorcet = [
+            algorithm
+            for algorithm in present
+            if all(
+                algorithm == opponent or margins[(algorithm, opponent)] > 0
+                for opponent in present
+            )
+        ]
+        if condorcet:
+            result = frozenset(condorcet)
+            memo[mask] = result
+            return result
+
+        strongest_paths = _strongest_margin_paths(present, margins)
+        pairs = sorted(
+            [
+                (margins[(winner, loser)], winner, loser)
+                for winner in present
+                for loser in present
+                if winner != loser
+            ],
+            key=lambda item: (-item[0], item[1], item[2]),
+        )
+
+        best_margin: float | None = None
+        result_set: set[str] = set()
+        for margin, winner, loser in pairs:
+            reduced_mask = mask & ~(1 << index[loser])
+            if winner not in winners(reduced_mask):
+                continue
+            if use_stable_filter and margins[(loser, winner)] > 0:
+                if strongest_paths[(winner, loser)] < margins[(loser, winner)]:
+                    continue
+            if best_margin is None:
+                best_margin = margin
+            if margin != best_margin:
+                break
+            result_set.add(winner)
+
+        if not result_set:
+            result_set.add(min(present, key=lambda algorithm: (mean_ranks[algorithm], algorithm)))
+
+        result = frozenset(result_set)
+        memo[mask] = result
+        return result
+
+    remaining = set(algorithms)
+    ranking: list[str] = []
+    while remaining:
+        mask = 0
+        for algorithm in remaining:
+            mask |= 1 << index[algorithm]
+        winner_set = list(winners(mask))
+        winner_set.sort(key=lambda algorithm: (mean_ranks[algorithm], algorithm))
+        chosen = winner_set[0]
+        ranking.append(chosen)
+        remaining.remove(chosen)
+    return ranking
 
 
 def _kemeny_disagreement(order: Sequence[str], preferences: dict[tuple[str, str], int]) -> int:
