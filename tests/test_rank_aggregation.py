@@ -5,14 +5,18 @@ from rank_aggregation.methods import (
     BradleyTerryAggregator,
     BordaCountAggregator,
     CopelandPairwiseAggregator,
+    ColleyRankingAggregator,
     DMAUCPerformanceProfileAggregator,
     DMLBOLeaveOneOutProfileAggregator,
     DowdallHarmonicAggregator,
+    ELECTREIIIAggregator,
     FriedmanNemenyiRankAggregator,
     GeometricMeanQualityAggregator,
     HarmonicMeanQualityAggregator,
     KemenyYoungAggregator,
+    LinearOrderingProblemAggregator,
     MarginRowSumAggregator,
+    MasseyRankingAggregator,
     MarkovChainAggregator,
     MaximalLotteryAggregator,
     MeanQualityAggregator,
@@ -21,6 +25,8 @@ from rank_aggregation.methods import (
     MedianRankAggregator,
     MinimaxCondorcetAggregator,
     PlackettLuceAggregator,
+    PolyRankAggregator,
+    PROMETHEEIIAggregator,
     RankedPairsTidemanAggregator,
     ReciprocalRankFusionAggregator,
     RescaledMeanQualityAggregator,
@@ -29,8 +35,10 @@ from rank_aggregation.methods import (
     SimpleStableVotingAggregator,
     SplitCycleAggregator,
     StableVotingAggregator,
+    TOPSISAggregator,
     ThresholdQualityAggregator,
     ThurstoneMostellerAggregator,
+    VIKORAggregator,
     WorstRankCountAggregator,
 )
 
@@ -287,6 +295,50 @@ class TestQualityMethods(unittest.TestCase):
         self.assertEqual(result.scores["algo_a"], 1.0)
         self.assertEqual(result.scores["algo_b"], 1.0)
 
+    def test_promethee_ii(self) -> None:
+        qualities = {
+            "algo_a": [0.95, 0.92, 0.90],
+            "algo_b": [0.91, 0.88, 0.89],
+            "algo_c": [0.80, 0.85, 0.86],
+        }
+        result = PROMETHEEIIAggregator().aggregate(qualities)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_electre_iii(self) -> None:
+        qualities = {
+            "algo_a": [0.95, 0.92, 0.90],
+            "algo_b": [0.91, 0.88, 0.89],
+            "algo_c": [0.80, 0.85, 0.86],
+        }
+        result = ELECTREIIIAggregator(q=0.01, p=0.04, v=0.10).aggregate(qualities)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_topsis(self) -> None:
+        qualities = {
+            "algo_a": [0.95, 0.92, 0.90],
+            "algo_b": [0.91, 0.88, 0.89],
+            "algo_c": [0.80, 0.85, 0.86],
+        }
+        result = TOPSISAggregator().aggregate(qualities)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_vikor(self) -> None:
+        qualities = {
+            "algo_a": [0.95, 0.92, 0.90],
+            "algo_b": [0.91, 0.88, 0.89],
+            "algo_c": [0.80, 0.85, 0.86],
+        }
+        result = VIKORAggregator().aggregate(qualities)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertLess(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertLess(result.scores["algo_b"], result.scores["algo_c"])
+
 
 class TestAdvancedMethods(unittest.TestCase):
     def test_friedman_nemenyi_significant(self) -> None:
@@ -315,6 +367,26 @@ class TestAdvancedMethods(unittest.TestCase):
         }
         result = KemenyYoungAggregator().aggregate(rankings)
         self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_linear_ordering_problem(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1],
+            "algo_b": [2, 2, 1, 2],
+            "algo_c": [3, 3, 3, 3],
+        }
+        result = LinearOrderingProblemAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+
+    def test_polyrank(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1],
+            "algo_b": [2, 2, 1, 2],
+            "algo_c": [3, 3, 3, 3],
+        }
+        result = PolyRankAggregator(degree=2).aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
 
     def test_bradley_terry(self) -> None:
         rankings = {
@@ -420,6 +492,28 @@ class TestAdvancedMethods(unittest.TestCase):
         result = DMLBOLeaveOneOutProfileAggregator().aggregate(rankings)
         self.assertEqual(result.ranking, ["algo_a", "algo_b"])
 
+    def test_massey_ranking(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1],
+            "algo_b": [2, 2, 1, 2],
+            "algo_c": [3, 3, 3, 3],
+        }
+        result = MasseyRankingAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
+    def test_colley_ranking(self) -> None:
+        rankings = {
+            "algo_a": [1, 1, 2, 1],
+            "algo_b": [2, 2, 1, 2],
+            "algo_c": [3, 3, 3, 3],
+        }
+        result = ColleyRankingAggregator().aggregate(rankings)
+        self.assertEqual(result.ranking, ["algo_a", "algo_b", "algo_c"])
+        self.assertGreater(result.scores["algo_a"], result.scores["algo_b"])
+        self.assertGreater(result.scores["algo_b"], result.scores["algo_c"])
+
 
 class TestValidation(unittest.TestCase):
     def test_empty_input_raises(self) -> None:
@@ -503,6 +597,29 @@ class TestValidation(unittest.TestCase):
             ReciprocalRankFusionAggregator(k=-1)
         with self.assertRaises(ValueError):
             ReciprocalRankFusionAggregator().aggregate({"algo_a": [1, 0], "algo_b": [2, 1]})
+
+    def test_invalid_vikor_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            VIKORAggregator(v=1.1)
+
+    def test_invalid_mcdm_params_raise(self) -> None:
+        qualities = {"algo_a": [1.0, 2.0], "algo_b": [2.0, 1.0]}
+        with self.assertRaises(ValueError):
+            PROMETHEEIIAggregator(weights=[1.0]).aggregate(qualities)
+        with self.assertRaises(ValueError):
+            ELECTREIIIAggregator(q=0.2, p=0.1).aggregate(qualities)
+        with self.assertRaises(ValueError):
+            ELECTREIIIAggregator(p=0.3, v=0.2).aggregate(qualities)
+
+    def test_invalid_lop_and_polyrank_params_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            LinearOrderingProblemAggregator(exact_max_algorithms=1)
+        with self.assertRaises(ValueError):
+            PolyRankAggregator(degree=-1)
+        with self.assertRaises(ValueError):
+            PolyRankAggregator(max_iter=0)
+        with self.assertRaises(ValueError):
+            PolyRankAggregator(tol=0.0)
 
 
 if __name__ == "__main__":

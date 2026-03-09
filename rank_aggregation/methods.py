@@ -242,6 +242,409 @@ class ReciprocalRankFusionAggregator(RankAggregator):
         return float(sum(1.0 / (self.k + rank) for rank in ranks))
 
 
+class PROMETHEEIIAggregator(RankAggregator):
+    """R-P2: PROMETHEE II ranking using the usual preference criterion."""
+
+    def __init__(self, weights: Sequence[float] | None = None) -> None:
+        self.weights = weights
+
+    @property
+    def name(self) -> str:
+        return "R-P2"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        values = _quality_matrix(rankings, algorithms)
+        weights = _normalized_weights(self.weights, len(values[0]))
+
+        positive_flow = {algorithm: 0.0 for algorithm in algorithms}
+        negative_flow = {algorithm: 0.0 for algorithm in algorithms}
+        for first_idx, first in enumerate(algorithms):
+            for second_idx, second in enumerate(algorithms):
+                if first_idx == second_idx:
+                    continue
+                preference = 0.0
+                for task_idx, weight in enumerate(weights):
+                    if values[first_idx][task_idx] > values[second_idx][task_idx]:
+                        preference += weight
+                positive_flow[first] += preference
+                negative_flow[first] += _usual_preference_index(values[second_idx], values[first_idx], weights)
+
+        divisor = max(1, len(algorithms) - 1)
+        scores = {
+            algorithm: (positive_flow[algorithm] - negative_flow[algorithm]) / divisor
+            for algorithm in algorithms
+        }
+        outgoing = {algorithm: positive_flow[algorithm] / divisor for algorithm in algorithms}
+        mean_quality = {
+            algorithm: float(fmean(values[idx]))
+            for idx, algorithm in enumerate(algorithms)
+        }
+        ranking = sorted(
+            algorithms,
+            key=lambda algorithm: (-scores[algorithm], -outgoing[algorithm], -mean_quality[algorithm], algorithm),
+        )
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class ELECTREIIIAggregator(RankAggregator):
+    """R-E3: ELECTRE III-style outranking aggregated into net credibility flows."""
+
+    def __init__(
+        self,
+        weights: Sequence[float] | None = None,
+        q: float | Sequence[float] = 0.0,
+        p: float | Sequence[float] = 0.0,
+        v: float | Sequence[float] | None = None,
+    ) -> None:
+        self.weights = weights
+        self.q = q
+        self.p = p
+        self.v = v
+
+    @property
+    def name(self) -> str:
+        return "R-E3"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        values = _quality_matrix(rankings, algorithms)
+        task_count = len(values[0])
+        weights = _normalized_weights(self.weights, task_count)
+        q_values = _expanded_parameter(self.q, task_count, "q")
+        p_values = _expanded_parameter(self.p, task_count, "p")
+        v_values = None if self.v is None else _expanded_parameter(self.v, task_count, "v")
+
+        for task_idx in range(task_count):
+            if q_values[task_idx] < 0 or p_values[task_idx] < 0:
+                raise ValueError("q and p must be non-negative")
+            if q_values[task_idx] > p_values[task_idx]:
+                raise ValueError("q must be <= p for every task")
+            if v_values is not None:
+                if v_values[task_idx] < 0:
+                    raise ValueError("v must be non-negative")
+                if p_values[task_idx] > v_values[task_idx]:
+                    raise ValueError("p must be <= v for every task")
+
+        credibility: dict[tuple[str, str], float] = {}
+        concordance_out = {algorithm: 0.0 for algorithm in algorithms}
+        concordance_in = {algorithm: 0.0 for algorithm in algorithms}
+        for first_idx, first in enumerate(algorithms):
+            for second_idx, second in enumerate(algorithms):
+                if first_idx == second_idx:
+                    continue
+                partial_concordance: list[float] = []
+                partial_discordance: list[float] = []
+                for task_idx in range(task_count):
+                    diff = values[first_idx][task_idx] - values[second_idx][task_idx]
+                    partial_concordance.append(
+                        _electre_partial_concordance(diff, q_values[task_idx], p_values[task_idx])
+                    )
+                    if v_values is None:
+                        partial_discordance.append(0.0)
+                    else:
+                        partial_discordance.append(
+                            _electre_partial_discordance(diff, p_values[task_idx], v_values[task_idx])
+                        )
+
+                concordance = sum(weight * value for weight, value in zip(weights, partial_concordance))
+                score = concordance
+                if concordance < 1.0:
+                    for discordance in partial_discordance:
+                        if discordance > concordance:
+                            score *= (1.0 - discordance) / (1.0 - concordance)
+                credibility[(first, second)] = score
+                concordance_out[first] += score
+                concordance_in[first] += credibility.get((second, first), 0.0)
+
+        divisor = max(1, len(algorithms) - 1)
+        scores = {
+            algorithm: (
+                sum(credibility[(algorithm, opponent)] for opponent in algorithms if opponent != algorithm)
+                - sum(credibility[(opponent, algorithm)] for opponent in algorithms if opponent != algorithm)
+            )
+            / divisor
+            for algorithm in algorithms
+        }
+        outgoing = {
+            algorithm: sum(credibility[(algorithm, opponent)] for opponent in algorithms if opponent != algorithm)
+            / divisor
+            for algorithm in algorithms
+        }
+        mean_quality = {
+            algorithm: float(fmean(values[idx]))
+            for idx, algorithm in enumerate(algorithms)
+        }
+        ranking = sorted(
+            algorithms,
+            key=lambda algorithm: (-scores[algorithm], -outgoing[algorithm], -mean_quality[algorithm], algorithm),
+        )
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class TOPSISAggregator(RankAggregator):
+    """R-TOPSIS: TOPSIS closeness-coefficient ranking."""
+
+    def __init__(self, weights: Sequence[float] | None = None) -> None:
+        self.weights = weights
+
+    @property
+    def name(self) -> str:
+        return "R-TOPSIS"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        values = _quality_matrix(rankings, algorithms)
+        task_count = len(values[0])
+        weights = _normalized_weights(self.weights, task_count)
+
+        normalized = [[0.0 for _ in range(task_count)] for _ in algorithms]
+        for task_idx in range(task_count):
+            norm = sqrt(sum(row[task_idx] * row[task_idx] for row in values))
+            if norm == 0:
+                continue
+            for algorithm_idx in range(len(algorithms)):
+                normalized[algorithm_idx][task_idx] = values[algorithm_idx][task_idx] / norm
+
+        weighted = [
+            [normalized[algorithm_idx][task_idx] * weights[task_idx] for task_idx in range(task_count)]
+            for algorithm_idx in range(len(algorithms))
+        ]
+        ideal_best = [max(row[task_idx] for row in weighted) for task_idx in range(task_count)]
+        ideal_worst = [min(row[task_idx] for row in weighted) for task_idx in range(task_count)]
+
+        scores: dict[str, float] = {}
+        for algorithm_idx, algorithm in enumerate(algorithms):
+            distance_best = sqrt(
+                sum((weighted[algorithm_idx][task_idx] - ideal_best[task_idx]) ** 2 for task_idx in range(task_count))
+            )
+            distance_worst = sqrt(
+                sum((weighted[algorithm_idx][task_idx] - ideal_worst[task_idx]) ** 2 for task_idx in range(task_count))
+            )
+            total_distance = distance_best + distance_worst
+            scores[algorithm] = 0.0 if total_distance == 0 else distance_worst / total_distance
+
+        ranking = [name for name, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class VIKORAggregator(RankAggregator):
+    """R-VIKOR: VIKOR compromise ranking."""
+
+    def __init__(self, weights: Sequence[float] | None = None, v: float = 0.5) -> None:
+        if v < 0 or v > 1:
+            raise ValueError("v must be in [0, 1]")
+        self.weights = weights
+        self.v = v
+
+    @property
+    def name(self) -> str:
+        return "R-VIKOR"
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        values = _quality_matrix(rankings, algorithms)
+        task_count = len(values[0])
+        weights = _normalized_weights(self.weights, task_count)
+
+        best = [max(row[task_idx] for row in values) for task_idx in range(task_count)]
+        worst = [min(row[task_idx] for row in values) for task_idx in range(task_count)]
+        s_scores: dict[str, float] = {}
+        r_scores: dict[str, float] = {}
+        for algorithm_idx, algorithm in enumerate(algorithms):
+            contributions: list[float] = []
+            for task_idx in range(task_count):
+                span = best[task_idx] - worst[task_idx]
+                if span == 0:
+                    contributions.append(0.0)
+                else:
+                    contributions.append(weights[task_idx] * (best[task_idx] - values[algorithm_idx][task_idx]) / span)
+            s_scores[algorithm] = float(sum(contributions))
+            r_scores[algorithm] = float(max(contributions, default=0.0))
+
+        s_best = min(s_scores.values())
+        s_worst = max(s_scores.values())
+        r_best = min(r_scores.values())
+        r_worst = max(r_scores.values())
+        scores: dict[str, float] = {}
+        for algorithm in algorithms:
+            s_term = 0.0 if s_worst == s_best else (s_scores[algorithm] - s_best) / (s_worst - s_best)
+            r_term = 0.0 if r_worst == r_best else (r_scores[algorithm] - r_best) / (r_worst - r_best)
+            scores[algorithm] = self.v * s_term + (1.0 - self.v) * r_term
+
+        ranking = sorted(algorithms, key=lambda algorithm: (scores[algorithm], s_scores[algorithm], r_scores[algorithm], algorithm))
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class MasseyRankingAggregator(RankAggregator):
+    """R-Massey: least-squares pairwise ranking from signed rank margins."""
+
+    @property
+    def name(self) -> str:
+        return "R-Massey"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        matrix, vector = _build_massey_system(rankings, algorithms)
+        solution = _solve_linear_system(matrix, vector)
+        scores = {algorithm: solution[idx] for idx, algorithm in enumerate(algorithms)}
+        ranking = [name for name, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class ColleyRankingAggregator(RankAggregator):
+    """R-Colley: regularized pairwise win/loss ranking from per-task duels."""
+
+    @property
+    def name(self) -> str:
+        return "R-Colley"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        matrix, vector = _build_colley_system(rankings, algorithms)
+        solution = _solve_linear_system(matrix, vector)
+        scores = {algorithm: solution[idx] for idx, algorithm in enumerate(algorithms)}
+        ranking = [name for name, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class LinearOrderingProblemAggregator(RankAggregator):
+    """R-LOP: maximize agreement with weighted pairwise preferences."""
+
+    def __init__(self, exact_max_algorithms: int = 9) -> None:
+        if exact_max_algorithms < 2:
+            raise ValueError("exact_max_algorithms must be >= 2")
+        self.exact_max_algorithms = exact_max_algorithms
+
+    @property
+    def name(self) -> str:
+        return "R-LOP"
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        supports = _pairwise_supports(rankings, algorithms)
+
+        if len(algorithms) <= self.exact_max_algorithms:
+            order = _linear_ordering_exact(algorithms, supports)
+        else:
+            order = _linear_ordering_heuristic(rankings, algorithms, supports)
+
+        scores = {algorithm: float(index + 1) for index, algorithm in enumerate(order)}
+        return AggregationResult(scores=scores, ranking=order)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
+class PolyRankAggregator(RankAggregator):
+    """R-PolyRank: alternating fit of latent scores and an odd polynomial link."""
+
+    def __init__(self, degree: int = 1, max_iter: int = 50, tol: float = 1e-8) -> None:
+        if degree < 0:
+            raise ValueError("degree must be >= 0")
+        if max_iter <= 0:
+            raise ValueError("max_iter must be > 0")
+        if tol <= 0:
+            raise ValueError("tol must be > 0")
+        self.degree = degree
+        self.max_iter = max_iter
+        self.tol = tol
+
+    @property
+    def name(self) -> str:
+        return "R-PolyRank"
+
+    @property
+    def higher_is_better(self) -> bool:
+        return True
+
+    def aggregate(self, rankings: Rankings) -> AggregationResult:
+        self._validate(rankings)
+        algorithms = sorted(rankings)
+        supports = _pairwise_supports(rankings, algorithms)
+        observations = _polyrank_observations(algorithms, supports)
+        if not observations:
+            scores = {algorithm: 0.0 for algorithm in algorithms}
+            return AggregationResult(scores=scores, ranking=algorithms)
+
+        coefficients = [0.0 for _ in range(self.degree + 1)]
+        coefficients[0] = 1.0
+        previous_scores = {algorithm: 0.0 for algorithm in algorithms}
+
+        for _ in range(self.max_iter):
+            transformed = [
+                _polyrank_transform(observation["z"], coefficients)
+                for observation in observations
+            ]
+            score_values = _least_squares_pairwise_scores(algorithms, observations, transformed)
+            coefficients = _fit_polyrank_coefficients(observations, score_values, algorithms, self.degree)
+            # Keep the learned odd polynomial monotone in the simplest deterministic way.
+            coefficients[0] = max(coefficients[0], 1e-9)
+
+            delta = max(
+                abs(score_values[idx] - previous_scores[algorithm])
+                for idx, algorithm in enumerate(algorithms)
+            )
+            previous_scores = {
+                algorithm: score_values[idx]
+                for idx, algorithm in enumerate(algorithms)
+            }
+            if delta < self.tol:
+                break
+
+        scores = previous_scores
+        ranking = [name for name, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+        return AggregationResult(scores=scores, ranking=ranking)
+
+    def _score(self, ranks: Sequence[float]) -> float:
+        raise NotImplementedError("aggregate() is overridden for this method")
+
+
 class BradleyTerryAggregator(RankAggregator):
     """R-BT: Bradley-Terry pairwise comparative rating."""
 
@@ -1033,6 +1436,60 @@ def _fit_bradley_terry(
     return strengths
 
 
+def _quality_matrix(rankings: Rankings, algorithms: Sequence[str]) -> list[list[float]]:
+    return [[float(value) for value in rankings[algorithm]] for algorithm in algorithms]
+
+
+def _normalized_weights(weights: Sequence[float] | None, size: int) -> list[float]:
+    if size <= 0:
+        return []
+    if weights is None:
+        return [1.0 / size for _ in range(size)]
+    if len(weights) != size:
+        raise ValueError("weights must match the number of tasks")
+    if any(weight < 0 for weight in weights):
+        raise ValueError("weights must be non-negative")
+    total = float(sum(weights))
+    if total <= 0:
+        raise ValueError("weights must sum to a positive value")
+    return [float(weight) / total for weight in weights]
+
+
+def _expanded_parameter(value: float | Sequence[float], size: int, name: str) -> list[float]:
+    if isinstance(value, (int, float)):
+        return [float(value) for _ in range(size)]
+    expanded = [float(item) for item in value]
+    if len(expanded) != size:
+        raise ValueError(f"{name} must match the number of tasks")
+    return expanded
+
+
+def _usual_preference_index(first: Sequence[float], second: Sequence[float], weights: Sequence[float]) -> float:
+    return float(
+        sum(weight for first_value, second_value, weight in zip(first, second, weights) if first_value > second_value)
+    )
+
+
+def _electre_partial_concordance(diff: float, q_value: float, p_value: float) -> float:
+    if diff >= -q_value:
+        return 1.0
+    if diff <= -p_value:
+        return 0.0
+    if p_value == q_value:
+        return 0.0
+    return (diff + p_value) / (p_value - q_value)
+
+
+def _electre_partial_discordance(diff: float, p_value: float, v_value: float) -> float:
+    if diff >= -p_value:
+        return 0.0
+    if diff <= -v_value:
+        return 1.0
+    if v_value == p_value:
+        return 1.0
+    return (-diff - p_value) / (v_value - p_value)
+
+
 def _fit_plackett_luce(
     algorithms: list[str],
     ordered_tasks: list[list[str]],
@@ -1641,3 +2098,231 @@ def _ranked_pairs_linear_extension(locked: dict[str, set[str]], algorithms: list
         for successor in locked[chosen]:
             indegree[successor] -= 1
     return order
+
+
+def _build_massey_system(rankings: Rankings, algorithms: Sequence[str]) -> tuple[list[list[float]], list[float]]:
+    size = len(algorithms)
+    index = {algorithm: idx for idx, algorithm in enumerate(algorithms)}
+    matrix = [[0.0 for _ in range(size)] for _ in range(size)]
+    vector = [0.0 for _ in range(size)]
+    task_count = len(next(iter(rankings.values())))
+
+    for first, second in combinations(algorithms, 2):
+        first_idx = index[first]
+        second_idx = index[second]
+        encounters = 0
+        margin_sum = 0.0
+        for task_idx in range(task_count):
+            first_rank = rankings[first][task_idx]
+            second_rank = rankings[second][task_idx]
+            encounters += 1
+            margin = second_rank - first_rank
+            margin_sum += margin
+        matrix[first_idx][first_idx] += encounters
+        matrix[second_idx][second_idx] += encounters
+        matrix[first_idx][second_idx] -= encounters
+        matrix[second_idx][first_idx] -= encounters
+        vector[first_idx] += margin_sum
+        vector[second_idx] -= margin_sum
+
+    matrix[-1] = [1.0 for _ in range(size)]
+    vector[-1] = 0.0
+    return matrix, vector
+
+
+def _build_colley_system(rankings: Rankings, algorithms: Sequence[str]) -> tuple[list[list[float]], list[float]]:
+    size = len(algorithms)
+    index = {algorithm: idx for idx, algorithm in enumerate(algorithms)}
+    matrix = [[0.0 for _ in range(size)] for _ in range(size)]
+    wins = [0.0 for _ in range(size)]
+    losses = [0.0 for _ in range(size)]
+    comparisons = [[0.0 for _ in range(size)] for _ in range(size)]
+    task_count = len(next(iter(rankings.values())))
+
+    for first, second in combinations(algorithms, 2):
+        first_idx = index[first]
+        second_idx = index[second]
+        for task_idx in range(task_count):
+            comparisons[first_idx][second_idx] += 1.0
+            comparisons[second_idx][first_idx] += 1.0
+            first_rank = rankings[first][task_idx]
+            second_rank = rankings[second][task_idx]
+            if first_rank < second_rank:
+                wins[first_idx] += 1.0
+                losses[second_idx] += 1.0
+            elif second_rank < first_rank:
+                wins[second_idx] += 1.0
+                losses[first_idx] += 1.0
+            else:
+                wins[first_idx] += 0.5
+                losses[first_idx] += 0.5
+                wins[second_idx] += 0.5
+                losses[second_idx] += 0.5
+
+    for row_idx in range(size):
+        total_games = sum(comparisons[row_idx])
+        matrix[row_idx][row_idx] = 2.0 + total_games
+        for col_idx in range(size):
+            if row_idx != col_idx:
+                matrix[row_idx][col_idx] = -comparisons[row_idx][col_idx]
+
+    vector = [1.0 + (wins[idx] - losses[idx]) / 2.0 for idx in range(size)]
+    return matrix, vector
+
+
+def _linear_ordering_objective(order: Sequence[str], supports: dict[tuple[str, str], float]) -> float:
+    total = 0.0
+    for index, first in enumerate(order):
+        for second in order[index + 1 :]:
+            total += supports[(first, second)]
+    return total
+
+
+def _linear_ordering_exact(
+    algorithms: list[str],
+    supports: dict[tuple[str, str], float],
+) -> list[str]:
+    best_order: tuple[str, ...] | None = None
+    best_score: float | None = None
+    for candidate in permutations(algorithms):
+        score = _linear_ordering_objective(candidate, supports)
+        if best_score is None or score > best_score or (score == best_score and candidate < best_order):
+            best_order = candidate
+            best_score = score
+    return list(best_order) if best_order is not None else algorithms
+
+
+def _linear_ordering_heuristic(
+    rankings: Rankings,
+    algorithms: list[str],
+    supports: dict[tuple[str, str], float],
+) -> list[str]:
+    order = sorted(algorithms, key=lambda algorithm: (fmean(rankings[algorithm]), algorithm))
+    best_score = _linear_ordering_objective(order, supports)
+
+    improved = True
+    while improved:
+        improved = False
+        for left in range(len(order) - 1):
+            for right in range(left + 1, len(order)):
+                candidate = order[:]
+                candidate[left], candidate[right] = candidate[right], candidate[left]
+                candidate_score = _linear_ordering_objective(candidate, supports)
+                if candidate_score > best_score:
+                    order = candidate
+                    best_score = candidate_score
+                    improved = True
+    return order
+
+
+def _polyrank_observations(
+    algorithms: Sequence[str],
+    supports: dict[tuple[str, str], float],
+) -> list[dict[str, float | str]]:
+    observations: list[dict[str, float | str]] = []
+    for first, second in combinations(algorithms, 2):
+        first_support = supports[(first, second)]
+        second_support = supports[(second, first)]
+        total = first_support + second_support
+        if total <= 0:
+            continue
+        probability = first_support / total
+        clipped = min(max(probability, 1e-6), 1.0 - 1e-6)
+        observations.append(
+            {
+                "first": first,
+                "second": second,
+                "z": 2.0 * clipped - 1.0,
+            }
+        )
+    return observations
+
+
+def _polyrank_transform(z_value: float, coefficients: Sequence[float]) -> float:
+    total = 0.0
+    for degree, coefficient in enumerate(coefficients):
+        total += coefficient * (z_value ** (2 * degree + 1))
+    return total
+
+
+def _least_squares_pairwise_scores(
+    algorithms: Sequence[str],
+    observations: Sequence[dict[str, float | str]],
+    targets: Sequence[float],
+) -> list[float]:
+    size = len(algorithms)
+    index = {algorithm: idx for idx, algorithm in enumerate(algorithms)}
+    matrix = [[0.0 for _ in range(size)] for _ in range(size)]
+    vector = [0.0 for _ in range(size)]
+
+    for observation, target in zip(observations, targets):
+        first = str(observation["first"])
+        second = str(observation["second"])
+        first_idx = index[first]
+        second_idx = index[second]
+        matrix[first_idx][first_idx] += 1.0
+        matrix[second_idx][second_idx] += 1.0
+        matrix[first_idx][second_idx] -= 1.0
+        matrix[second_idx][first_idx] -= 1.0
+        vector[first_idx] += target
+        vector[second_idx] -= target
+
+    matrix[-1] = [1.0 for _ in range(size)]
+    vector[-1] = 0.0
+    return _solve_linear_system(matrix, vector)
+
+
+def _fit_polyrank_coefficients(
+    observations: Sequence[dict[str, float | str]],
+    score_values: Sequence[float],
+    algorithms: Sequence[str],
+    degree: int,
+) -> list[float]:
+    basis_size = degree + 1
+    matrix = [[0.0 for _ in range(basis_size)] for _ in range(basis_size)]
+    vector = [0.0 for _ in range(basis_size)]
+    index = {algorithm: idx for idx, algorithm in enumerate(algorithms)}
+
+    for observation in observations:
+        z_value = float(observation["z"])
+        first_idx = index[str(observation["first"])]
+        second_idx = index[str(observation["second"])]
+        target = score_values[first_idx] - score_values[second_idx]
+        basis = [z_value ** (2 * power + 1) for power in range(basis_size)]
+        for row_idx in range(basis_size):
+            vector[row_idx] += basis[row_idx] * target
+            for col_idx in range(basis_size):
+                matrix[row_idx][col_idx] += basis[row_idx] * basis[col_idx]
+
+    ridge = 1e-6
+    for idx in range(basis_size):
+        matrix[idx][idx] += ridge
+    return _solve_linear_system(matrix, vector)
+
+
+def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    size = len(matrix)
+    augmented = [row[:] + [vector[idx]] for idx, row in enumerate(matrix)]
+
+    for pivot_idx in range(size):
+        pivot_row = max(range(pivot_idx, size), key=lambda row_idx: abs(augmented[row_idx][pivot_idx]))
+        pivot_value = augmented[pivot_row][pivot_idx]
+        if abs(pivot_value) < 1e-12:
+            raise ValueError("linear system is singular")
+        if pivot_row != pivot_idx:
+            augmented[pivot_idx], augmented[pivot_row] = augmented[pivot_row], augmented[pivot_idx]
+
+        pivot_value = augmented[pivot_idx][pivot_idx]
+        for col_idx in range(pivot_idx, size + 1):
+            augmented[pivot_idx][col_idx] /= pivot_value
+
+        for row_idx in range(size):
+            if row_idx == pivot_idx:
+                continue
+            factor = augmented[row_idx][pivot_idx]
+            if factor == 0:
+                continue
+            for col_idx in range(pivot_idx, size + 1):
+                augmented[row_idx][col_idx] -= factor * augmented[pivot_idx][col_idx]
+
+    return [augmented[row_idx][size] for row_idx in range(size)]
