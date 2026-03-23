@@ -3,6 +3,8 @@
 
 ### Curated tag vocabulary
 
+Solver and complexity tags below describe the implementation used in this repository, not every possible implementation of the named method.
+
 **Input tags**
 
 - `input:score`: consumes per-task quality or score values directly
@@ -42,6 +44,59 @@
 - `mechanism:likelihood`: fitted through a likelihood-based statistical model
 - `mechanism:statistical-test`: uses statistical hypothesis testing
 
+**Solver tags**
+
+- `solver:direct-statistic`: computed directly from per-task values via a closed-form statistic
+- `solver:direct-counting`: computed by direct counting of events, wins, or threshold hits
+- `solver:direct-scoring`: computed by a direct additive scoring formula
+- `solver:flow-computation`: computed from pairwise or outranking flows without iterative fitting
+- `solver:path-closure`: computed from strongest-path or path-closure style graph updates
+- `solver:greedy-dag`: computed by greedily building an acyclic precedence graph
+- `solver:recursive-elimination`: computed by recursive or memoized winner elimination
+- `solver:mm-iteration`: fitted by minorization-maximization style fixed-point updates
+- `solver:gradient-ascent`: fitted by gradient-based optimization
+- `solver:alternating-least-squares`: alternates between coefficient fitting and score estimation
+- `solver:power-iteration`: computed from the stationary distribution of a transition matrix
+- `solver:fictitious-play`: approximated by deterministic fictitious play
+- `solver:gaussian-elimination`: solved as a linear system with Gaussian elimination
+- `solver:exact-enumeration`: solved exactly by enumerating all permutations
+- `solver:local-search`: approximated by deterministic swap-based local search
+- `solver:distance-to-ideal`: computed from distances to ideal and anti-ideal reference points
+- `solver:profile-integration`: computed by integrating or repeatedly recomputing benchmark profiles
+
+**Complexity tags**
+
+- `complexity:polytime`: implemented with polynomial-time deterministic computation
+- `complexity:iterative-polytime`: implemented by an iterative procedure with polynomial-time iterations
+- `complexity:factorial-exact`: exact implementation based on permutation enumeration
+- `complexity:exponential-recursive`: recursive subset-based implementation with exponential worst-case growth
+- `complexity:heuristic-polytime`: heuristic implementation with polynomial-time iterations
+
+**Maturity tags**
+
+- `maturity:classical`: long-established canonical method
+- `maturity:standard`: broadly recognized and commonly used baseline
+- `maturity:specialized`: mostly niche, research-oriented, or community-specific
+
+**Domain tags**
+
+- `domain:benchmarking`: used primarily for benchmark aggregation and empirical comparison studies
+- `domain:social-choice`: used primarily in voting, preference aggregation, or social choice
+- `domain:information-retrieval`: used primarily in retrieval, search, or rank fusion
+- `domain:sports-rating`: used primarily for competitive rating and schedule-based ranking
+- `domain:mcda`: used primarily in multi-criteria decision analysis
+- `domain:preference-learning`: used primarily in probabilistic preference or ranking models
+- `domain:psychometrics`: used primarily in latent-trait or comparative judgment modeling
+
+**Assumption tags**
+
+- `assumption:complete-rankings`: expects one rank per algorithm for every task
+- `assumption:ties-native`: tied inputs are explicitly represented in the implementation rather than silently broken
+- `assumption:ties-broken`: tied inputs are accepted but resolved by deterministic tie-breaking in the implementation
+- `assumption:strict-positive-ranks`: requires strictly positive rank positions
+- `assumption:nonnegative-scores`: requires non-negative score values
+- `assumption:positive-scores`: requires strictly positive score values
+
 ---
 
 ### Methods by group
@@ -49,82 +104,82 @@
 1. **Score based**.    
    Methods that aggregate raw performance values or quality scores directly.
    
-   a. `MeanQualityAggregator` (`Q-M`) - tags: `input:score`, `family:central-tendency`, `operator:mean`    
-   b. `MedianQualityAggregator` (`Q-Md`) - tags: `input:score`, `family:central-tendency`, `operator:median`    
-   c. `GeometricMeanQualityAggregator` (`Q-GM`) - tags: `input:score`, `family:central-tendency`, `operator:geometric-mean`    
-   d. `HarmonicMeanQualityAggregator` (`Q-HM`) - tags: `input:score`, `family:central-tendency`, `operator:harmonic-mean`    
-   e. `RescaledMeanQualityAggregator` (`Q-RM`) - tags: `input:score`, `family:central-tendency`, `operator:mean`, `mechanism:normalization`    
-   f. `ThresholdQualityAggregator` (`Q-Th(theta)`) - tags: `input:score`, `mechanism:thresholding`
+   a. `MeanQualityAggregator` (`Q-M`) - tags: `input:score`, `family:central-tendency`, `operator:mean`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`    
+   b. `MedianQualityAggregator` (`Q-Md`) - tags: `input:score`, `family:central-tendency`, `operator:median`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`    
+   c. `GeometricMeanQualityAggregator` (`Q-GM`) - tags: `input:score`, `family:central-tendency`, `operator:geometric-mean`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:nonnegative-scores`    
+   d. `HarmonicMeanQualityAggregator` (`Q-HM`) - tags: `input:score`, `family:central-tendency`, `operator:harmonic-mean`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:positive-scores`    
+   e. `RescaledMeanQualityAggregator` (`Q-RM`) - tags: `input:score`, `family:central-tendency`, `operator:mean`, `mechanism:normalization`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`    
+   f. `ThresholdQualityAggregator` (`Q-Th(theta)`) - tags: `input:score`, `mechanism:thresholding`, `solver:direct-counting`, `complexity:polytime`, `maturity:specialized`, `domain:benchmarking`
 
 3. **Rank based**.    
    Methods that start from full rankings and combine them without reducing them to pairwise relations first.
    
-   a. `MeanRankAggregator` (`R-M`) - tags: `input:rank`, `family:central-tendency`, `operator:mean`    
-   b. `MedianRankAggregator` (`R-Md`) - tags: `input:rank`, `family:central-tendency`, `operator:median`    
-   c. `BestRankCountAggregator` (`R-B`) - tags: `input:rank`, `family:positional`, `mechanism:counting`    
-   d. `WorstRankCountAggregator` (`R-W`) - tags: `input:rank`, `family:positional`, `mechanism:counting`    
-   e. `BordaCountAggregator` (`R-Borda`) - tags: `input:rank`, `family:positional`, `mechanism:scoring`    
-   f. `DowdallHarmonicAggregator` (`R-Dowdall`) - tags: `input:rank`, `family:positional`, `mechanism:reciprocal-weighting`    
-   g. `ReciprocalRankFusionAggregator` (`R-RRF`) - tags: `input:rank`, `family:positional`, `mechanism:reciprocal-weighting`    
-   h. `KemenyYoungAggregator` (`R-Kem`) - tags: `input:rank`, `family:consensus`, `mechanism:optimization`
+   a. `MeanRankAggregator` (`R-M`) - tags: `input:rank`, `family:central-tendency`, `operator:mean`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:complete-rankings`    
+   b. `MedianRankAggregator` (`R-Md`) - tags: `input:rank`, `family:central-tendency`, `operator:median`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:complete-rankings`    
+   c. `BestRankCountAggregator` (`R-B`) - tags: `input:rank`, `family:positional`, `mechanism:counting`, `solver:direct-counting`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`, `assumption:complete-rankings`    
+   d. `WorstRankCountAggregator` (`R-W`) - tags: `input:rank`, `family:positional`, `mechanism:counting`, `solver:direct-counting`, `complexity:polytime`, `maturity:specialized`, `domain:benchmarking`, `assumption:complete-rankings`    
+   e. `BordaCountAggregator` (`R-Borda`) - tags: `input:rank`, `family:positional`, `mechanism:scoring`, `solver:direct-scoring`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`, `assumption:complete-rankings`    
+   f. `DowdallHarmonicAggregator` (`R-Dowdall`) - tags: `input:rank`, `family:positional`, `mechanism:reciprocal-weighting`, `solver:direct-scoring`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`, `assumption:complete-rankings`, `assumption:strict-positive-ranks`    
+   g. `ReciprocalRankFusionAggregator` (`R-RRF`) - tags: `input:rank`, `family:positional`, `mechanism:reciprocal-weighting`, `solver:direct-scoring`, `complexity:polytime`, `maturity:standard`, `domain:information-retrieval`, `assumption:complete-rankings`, `assumption:strict-positive-ranks`    
+   h. `KemenyYoungAggregator` (`R-Kem`) - tags: `input:rank`, `family:consensus`, `mechanism:optimization`, `solver:exact-enumeration`, `solver:local-search`, `complexity:factorial-exact`, `complexity:heuristic-polytime`, `maturity:classical`, `domain:social-choice`, `assumption:complete-rankings`
 
 4. **Pairwise**.    
    Methods that derive the final ranking from pairwise comparisons, pairwise margins, or pairwise preference models.
    
    a. **Simple**.    
       Direct pairwise counting or margin-based aggregation rules.
-      1. `CopelandPairwiseAggregator` (`R-Cop`) - tags: `input:pairwise`, `mechanism:counting`
-      2. `MarginRowSumAggregator` (`R-MRS`) - tags: `input:pairwise`, `mechanism:pairwise-margins`, `mechanism:scoring`
+      1. `CopelandPairwiseAggregator` (`R-Cop`) - tags: `input:pairwise`, `mechanism:counting`, `solver:direct-counting`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`, `assumption:ties-native`
+      2. `MarginRowSumAggregator` (`R-MRS`) - tags: `input:pairwise`, `mechanism:pairwise-margins`, `mechanism:scoring`, `solver:direct-scoring`, `complexity:polytime`, `maturity:standard`, `domain:sports-rating`, `assumption:ties-native`
    
    b. **Condorcet**.    
       Methods centered on majority comparisons and Condorcet-consistent reasoning.
-      1. `MinimaxCondorcetAggregator` (`R-Minimax`) - tags: `input:pairwise`, `family:condorcet`, `mechanism:optimization`
-      2. `RankedPairsTidemanAggregator` (`R-RP`) - tags: `input:pairwise`, `family:condorcet`
-      3. `SchulzeBeatpathAggregator` (`R-Sch`) - tags: `input:pairwise`, `family:condorcet`
-      4. `SplitCycleAggregator` (`R-SC`) - tags: `input:pairwise`, `family:condorcet`
-      5. `RiverAggregator` (`R-River`) - tags: `input:pairwise`, `family:condorcet`
-      6. `StableVotingAggregator` (`R-SV`) - tags: `input:pairwise`, `family:condorcet`
-      7. `SimpleStableVotingAggregator` (`R-SSV`) - tags: `input:pairwise`, `family:condorcet`
+      1. `MinimaxCondorcetAggregator` (`R-Minimax`) - tags: `input:pairwise`, `family:condorcet`, `mechanism:optimization`, `solver:direct-counting`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`
+      2. `RankedPairsTidemanAggregator` (`R-RP`) - tags: `input:pairwise`, `family:condorcet`, `solver:greedy-dag`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`
+      3. `SchulzeBeatpathAggregator` (`R-Sch`) - tags: `input:pairwise`, `family:condorcet`, `solver:path-closure`, `complexity:polytime`, `maturity:classical`, `domain:social-choice`, `assumption:ties-native`
+      4. `SplitCycleAggregator` (`R-SC`) - tags: `input:pairwise`, `family:condorcet`, `solver:path-closure`, `complexity:polytime`, `maturity:specialized`, `domain:social-choice`, `assumption:ties-native`
+      5. `RiverAggregator` (`R-River`) - tags: `input:pairwise`, `family:condorcet`, `solver:greedy-dag`, `complexity:polytime`, `maturity:specialized`, `domain:social-choice`, `assumption:ties-native`
+      6. `StableVotingAggregator` (`R-SV`) - tags: `input:pairwise`, `family:condorcet`, `solver:recursive-elimination`, `complexity:exponential-recursive`, `maturity:specialized`, `domain:social-choice`, `assumption:ties-native`
+      7. `SimpleStableVotingAggregator` (`R-SSV`) - tags: `input:pairwise`, `family:condorcet`, `solver:recursive-elimination`, `complexity:exponential-recursive`, `maturity:specialized`, `domain:social-choice`, `assumption:ties-native`
    
    c. **Probabilistic**.    
       Pairwise models that estimate latent preferences through a statistical likelihood model.
-      1. `BradleyTerryAggregator` (`R-BT`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`
-      2. `ThurstoneMostellerAggregator` (`R-TM`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`
-      3. `PolyRankAggregator` (`R-PolyRank`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`
+      1. `BradleyTerryAggregator` (`R-BT`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`, `solver:mm-iteration`, `complexity:iterative-polytime`, `maturity:standard`, `domain:preference-learning`, `domain:sports-rating`, `assumption:ties-native`
+      2. `ThurstoneMostellerAggregator` (`R-TM`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`, `solver:gradient-ascent`, `complexity:iterative-polytime`, `maturity:standard`, `domain:psychometrics`, `domain:preference-learning`, `assumption:ties-native`
+      3. `PolyRankAggregator` (`R-PolyRank`) - tags: `input:pairwise`, `family:probabilistic`, `mechanism:likelihood`, `solver:alternating-least-squares`, `solver:gaussian-elimination`, `complexity:iterative-polytime`, `maturity:specialized`, `domain:preference-learning`, `assumption:ties-native`
    
    d. **Stochastic**.    
       Methods that use random-walk or game-theoretic dynamics derived from pairwise preferences.
-      1. `MarkovChainAggregator` (`R-MC`) - tags: `input:pairwise`, `mechanism:markov-chain`
-      2. `MaximalLotteryAggregator` (`R-ML`) - tags: `input:pairwise`, `mechanism:game-theoretic`
+      1. `MarkovChainAggregator` (`R-MC`) - tags: `input:pairwise`, `mechanism:markov-chain`, `solver:power-iteration`, `complexity:iterative-polytime`, `maturity:standard`, `domain:preference-learning`
+      2. `MaximalLotteryAggregator` (`R-ML`) - tags: `input:pairwise`, `mechanism:game-theoretic`, `solver:fictitious-play`, `complexity:iterative-polytime`, `maturity:specialized`, `domain:social-choice`
    
    e. **Linear**.    
       Methods that recover ratings by solving a linear system built from pairwise outcomes.
-      1. `MasseyRankingAggregator` (`R-Massey`) - tags: `input:pairwise`, `mechanism:linear-system`
-      2. `ColleyRankingAggregator` (`R-Colley`) - tags: `input:pairwise`, `mechanism:linear-system`
+      1. `MasseyRankingAggregator` (`R-Massey`) - tags: `input:pairwise`, `mechanism:linear-system`, `solver:gaussian-elimination`, `complexity:polytime`, `maturity:standard`, `domain:sports-rating`
+      2. `ColleyRankingAggregator` (`R-Colley`) - tags: `input:pairwise`, `mechanism:linear-system`, `solver:gaussian-elimination`, `complexity:polytime`, `maturity:standard`, `domain:sports-rating`, `assumption:ties-native`
    
    f. **Optimization**
       Methods defined primarily through an optimization objective over pairwise preferences.
-      1. `LinearOrderingProblemAggregator` (`R-LOP`) - tags: `input:pairwise`, `mechanism:optimization`
+      1. `LinearOrderingProblemAggregator` (`R-LOP`) - tags: `input:pairwise`, `mechanism:optimization`, `solver:exact-enumeration`, `solver:local-search`, `complexity:factorial-exact`, `complexity:heuristic-polytime`, `maturity:specialized`, `domain:social-choice`, `assumption:ties-native`
 
 5. **Probabilistic rank models**.    
    Methods that fit an explicit probability model over complete rankings or ranking generation.
 
-   a. `PlackettLuceAggregator` (`R-PL`) - tags: `input:rank`, `family:probabilistic`, `mechanism:likelihood`
+   a. `PlackettLuceAggregator` (`R-PL`) - tags: `input:rank`, `family:probabilistic`, `mechanism:likelihood`, `solver:mm-iteration`, `complexity:iterative-polytime`, `maturity:standard`, `domain:preference-learning`, `assumption:complete-rankings`, `assumption:ties-broken`
 
 6. **Multi-criteria decision analysis (MCDA)**.    
    Methods from decision analysis that combine multiple criteria, often with preference modeling or outranking logic.
    
-   a. `PROMETHEEIIAggregator` (`R-P2`) - tags: `input:score`, `family:mcda`, `family:outranking`    
-   b. `ELECTREIIIAggregator` (`R-E3`) - tags: `input:score`, `family:mcda`, `family:outranking`, `mechanism:thresholding`    
-   c. `TOPSISAggregator` (`R-TOPSIS`) - tags: `input:score`, `family:mcda`, `mechanism:normalization`    
-   d. `VIKORAggregator` (`R-VIKOR`) - tags: `input:score`, `family:mcda`, `mechanism:normalization`    
+   a. `PROMETHEEIIAggregator` (`R-P2`) - tags: `input:score`, `family:mcda`, `family:outranking`, `solver:flow-computation`, `complexity:polytime`, `maturity:standard`, `domain:mcda`    
+   b. `ELECTREIIIAggregator` (`R-E3`) - tags: `input:score`, `family:mcda`, `family:outranking`, `mechanism:thresholding`, `solver:flow-computation`, `complexity:polytime`, `maturity:standard`, `domain:mcda`    
+   c. `TOPSISAggregator` (`R-TOPSIS`) - tags: `input:score`, `family:mcda`, `mechanism:normalization`, `solver:distance-to-ideal`, `complexity:polytime`, `maturity:standard`, `domain:mcda`    
+   d. `VIKORAggregator` (`R-VIKOR`) - tags: `input:score`, `family:mcda`, `mechanism:normalization`, `solver:distance-to-ideal`, `complexity:polytime`, `maturity:standard`, `domain:mcda`    
 
 7. **Benchmark profiles**.    
    Methods designed around benchmark-wide comparison procedures such as statistical comparison protocols or performance profiles.
    
-   a. `FriedmanNemenyiRankAggregator` (`R-N`) - tags: `input:rank`, `family:benchmark-profile`, `mechanism:statistical-test`    
-   b. `DMAUCPerformanceProfileAggregator` (`DM-AUC`) - tags: `input:score`, `family:benchmark-profile`    
-   c. `DMLBOLeaveOneOutProfileAggregator` (`DM-LBO`) - tags: `input:score`, `family:benchmark-profile`    
+   a. `FriedmanNemenyiRankAggregator` (`R-N`) - tags: `input:rank`, `family:benchmark-profile`, `mechanism:statistical-test`, `solver:direct-statistic`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:complete-rankings`    
+   b. `DMAUCPerformanceProfileAggregator` (`DM-AUC`) - tags: `input:score`, `family:benchmark-profile`, `solver:profile-integration`, `complexity:polytime`, `maturity:standard`, `domain:benchmarking`, `assumption:positive-scores`    
+   c. `DMLBOLeaveOneOutProfileAggregator` (`DM-LBO`) - tags: `input:score`, `family:benchmark-profile`, `solver:profile-integration`, `complexity:polytime`, `maturity:specialized`, `domain:benchmarking`, `assumption:positive-scores`    
 
 
 ### Methods found somewhere, but not implemented as separate classes
